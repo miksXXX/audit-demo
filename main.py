@@ -1,4 +1,5 @@
-from fastapi import FastAPI, File, UploadFile, Request
+import os
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse
 import pandas as pd
 import io
@@ -25,35 +26,18 @@ async def analyze(file: UploadFile = File(...)):
     content = await file.read()
     df = pd.read_excel(io.BytesIO(content))
 
-    # === Wildberries: колонки из отчёта "Продажи" ===
     if 'Ваша цена' in df.columns:
-        df['profit'] = (
-            df['Ваша цена'] 
-            - df.get('Себестоимость', 0) 
-            - df.get('Логистика', 0) 
-            - df.get('К перечислению продавцу', 0) * 0.05  # пример комиссии
-        )
+        df['profit'] = df['Ваша цена'] - df.get('Себестоимость', 0) - df.get('Логистика', 0) - (df['Ваша цена'] * 0.15)
         sku_col = 'Номер поставки'
-        platform = 'Wildberries'
-
-    # === Ozon: колонки из финансового отчёта ===
     elif 'Наименование товара' in df.columns and 'К оплате продавцу' in df.columns:
-        df['profit'] = (
-            df['К оплате продавцу']
-            - df.get('Себестоимость', 0)
-            - df.get('Доставка', 0)
-        )
+        df['profit'] = df['К оплате продавцу'] - df.get('Себестоимость', 0) - df.get('Доставка', 0)
         sku_col = 'Артикул'
-        platform = 'Ozon'
-
     else:
-        return "<h3>Не удалось распознать формат отчёта.</h3><p>Поддерживаются: отчёты Wildberries («Продажи») и Ozon (финансовый отчёт).</p>"
+        return "<h3>Формат не поддерживается</h3>"
 
-    # Находим убыточные позиции
     loss_items = df[df['profit'] < 0]
     total_loss = abs(loss_items['profit'].sum())
 
-    # Генерируем HTML-отчёт
     rows = ""
     for _, row in loss_items.head(10).iterrows():
         rows += f"<tr><td>{row.get(sku_col, '—')}</td><td>{row['profit']:.0f} ₽</td></tr>"
@@ -61,21 +45,20 @@ async def analyze(file: UploadFile = File(...)):
     return f"""
     <html>
       <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto;">
-        <h2>Результат анализа ({platform})</h2>
-        <p>⚠️ Обнаружено <b>{len(loss_items)}</b> убыточных позиций.</p>
-        <p>Общий убыток: <b>{total_loss:,.0f} ₽</b></p>
-        
+        <h2>Результат анализа</h2>
+        <p>Убыточных позиций: {len(loss_items)}</p>
+        <p>Общий убыток: {total_loss:,.0f} ₽</p>
         <table border="1" style="margin-top: 20px; border-collapse: collapse;">
-          <tr><th>SKU / Артикул</th><th>Убыток (₽)</th></tr>
+          <tr><th>SKU</th><th>Убыток (₽)</th></tr>
           {rows}
         </table>
-
-        <p style="margin-top: 30px;">
-          <a href="/" style="color: #e74c3c; text-decoration: none;">← Загрузить другой отчёт</a>
-        </p>
-        <p style="margin-top: 20px; font-size: 0.9em; color: #888;">
-          Данные не сохраняются. Анализ происходит в браузере.
-        </p>
+        <p><a href="/">← Назад</a></p>
       </body>
     </html>
     """
+
+# Запуск только при прямом вызове (для локального теста)
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
